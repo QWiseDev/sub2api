@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -70,6 +71,9 @@ func TestForwardAsChatCompletions_ResponseFailed_PassthroughRule(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{
+		openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses),
+	}
 	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -136,6 +140,9 @@ func TestForwardAsChatCompletions_ResponseFailed_NoRule_Still502(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{
+		openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses),
+	}
 	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -184,6 +191,9 @@ func TestForwardAsChatCompletions_ResponseFailed_ErrorCodeRuleMatchesViaSemantic
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{
+		openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses),
+	}
 	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)

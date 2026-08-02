@@ -64,6 +64,29 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}
 }
 
+func TestShouldUseResponsesAPIForChatCompletions(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra map[string]any
+		want  bool
+	}{
+		{"missing mode uses inbound chat protocol", nil, false},
+		{"auto supported still uses inbound chat protocol", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeAuto), ExtraKeyResponsesSupported: true}, false},
+		{"auto unsupported uses inbound chat protocol", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeAuto), ExtraKeyResponsesSupported: false}, false},
+		{"force responses overrides inbound chat protocol", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, true},
+		{"force chat completions uses inbound chat protocol", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ShouldUseResponsesAPIForChatCompletions(tc.extra)
+			if got != tc.want {
+				t.Errorf("ShouldUseResponsesAPIForChatCompletions(%v) = %v, want %v", tc.extra, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeResponsesSupportMode(t *testing.T) {
 	tests := []struct {
 		name string

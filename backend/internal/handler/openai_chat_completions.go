@@ -407,7 +407,7 @@ func resolveOpenAIUpstreamEndpoint(c *gin.Context, account *service.Account, res
 		return endpoint
 	}
 	if account != nil && account.Type == service.AccountTypeAPIKey &&
-		!openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		!openai_compat.ShouldUseResponsesAPIForChatCompletions(account.Extra) {
 		return EndpointChatCompletions
 	}
 	return GetUpstreamEndpoint(c, account.Platform)
