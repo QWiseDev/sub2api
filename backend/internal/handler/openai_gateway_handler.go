@@ -35,6 +35,7 @@ type OpenAIGatewayHandler struct {
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
+	conversationRecordService  *service.ConversationRecordService
 	securityAuditCoordinator   *securityaudit.Coordinator
 	grokMediaEligibilityProber grokMediaEligibilityProber
 	opsService                 *service.OpsService

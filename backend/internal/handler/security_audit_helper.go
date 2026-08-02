@@ -3,15 +3,25 @@ package handler
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
-const securityAuditCompletedContextKey = "sub2api.security_audit.completed"
+const (
+	securityAuditCompletedContextKey = "sub2api.security_audit.completed"
+	conversationCaptureContextKey    = "sub2api.conversation.capture"
+)
+
+type conversationCaptureState struct {
+	service *service.ConversationRecordService
+	input   service.ConversationCaptureInput
+}
 
 // cachesSecurityAuditCompletion reports whether a successful audit may be
 // reused for the rest of the gin request. WebSocket turns share one Context
@@ -29,14 +39,22 @@ func (h *GatewayHandler) checkSecurityAudit(c *gin.Context, reqLog *zap.Logger, 
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	decision := runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	if decision == nil || decision.AllowNextStage {
+		enableConversationCapture(c, h.conversationRecordService, apiKey, subject, protocol, model, body)
+	}
+	return decision
 }
 
 func (h *OpenAIGatewayHandler) checkSecurityAudit(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte) *securityaudit.Decision {
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	decision := runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	if decision == nil || decision.AllowNextStage {
+		enableConversationCapture(c, h.conversationRecordService, apiKey, subject, protocol, model, body)
+	}
+	return decision
 }
 
 func (h *OpenAIGatewayHandler) checkSecurityAuditStage(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
@@ -150,4 +168,74 @@ func cloneSecurityAuditGroupID(value *int64) *int64 {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func enableConversationCapture(c *gin.Context, recordService *service.ConversationRecordService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte) {
+	if recordService == nil || c == nil || c.Request == nil || apiKey == nil {
+		return
+	}
+	if !conversationCaptureSupportedProtocol(protocol) {
+		return
+	}
+	groupID := int64(0)
+	if apiKey.GroupID != nil {
+		groupID = *apiKey.GroupID
+	}
+	if !recordService.ShouldCapture(c.Request.Context(), groupID, apiKey.ID) {
+		return
+	}
+	request := buildSecurityAuditRequest(c, apiKey, subject, protocol, model, body, "http")
+	capturedBody := body
+	requestTruncated := len(capturedBody) > service.ConversationRecordBodyMaxBytes
+	if requestTruncated {
+		capturedBody = capturedBody[:service.ConversationRecordBodyMaxBytes]
+	}
+	capturedBody = append([]byte(nil), capturedBody...)
+	c.Set(conversationCaptureContextKey, &conversationCaptureState{
+		service: recordService,
+		input: service.ConversationCaptureInput{
+			RequestID:        request.RequestID,
+			UserID:           request.UserID,
+			Username:         request.Username,
+			UserEmail:        request.UserEmail,
+			APIKeyID:         request.APIKeyID,
+			APIKeyName:       request.APIKeyName,
+			GroupID:          groupID,
+			GroupName:        request.GroupName,
+			Provider:         request.Provider,
+			Endpoint:         request.Endpoint,
+			Protocol:         request.Protocol,
+			Model:            request.Model,
+			SessionID:        service.ExtractClientSessionID(c),
+			PromptCacheKey:   service.ExtractConversationPromptCacheKey(request.Protocol, body),
+			Stream:           gjson.GetBytes(body, "stream").Bool(),
+			Body:             capturedBody,
+			RequestText:      service.ExtractContentModerationText(protocol, body),
+			RequestTruncated: requestTruncated,
+			StartedAt:        time.Now(),
+		},
+	})
+}
+
+func conversationCaptureSupportedProtocol(protocol string) bool {
+	switch strings.TrimSpace(protocol) {
+	case service.ContentModerationProtocolOpenAIChat,
+		service.ContentModerationProtocolOpenAIResponses,
+		service.ContentModerationProtocolAnthropicMessages:
+		return true
+	default:
+		return false
+	}
+}
+
+func getConversationCapture(c *gin.Context) (*conversationCaptureState, bool) {
+	if c == nil {
+		return nil, false
+	}
+	value, exists := c.Get(conversationCaptureContextKey)
+	if !exists {
+		return nil, false
+	}
+	state, ok := value.(*conversationCaptureState)
+	return state, ok && state != nil && state.service != nil
 }

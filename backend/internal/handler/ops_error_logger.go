@@ -518,9 +518,12 @@ func isOpsNoAvailableAccountError(err error) bool {
 
 type opsCaptureWriter struct {
 	gin.ResponseWriter
-	limit int
-	buf   bytes.Buffer
-	ctx   *gin.Context
+	limit                 int
+	buf                   bytes.Buffer
+	conversationLimit     int
+	conversationBuf       bytes.Buffer
+	conversationTruncated bool
+	ctx                   *gin.Context
 }
 
 const opsCaptureWriterLimit = service.OpsErrorLogQueueBodyMaxBytes
@@ -540,7 +543,10 @@ func acquireOpsCaptureWriter(rw gin.ResponseWriter) *opsCaptureWriter {
 	}
 	w.ResponseWriter = rw
 	w.limit = opsCaptureWriterLimit
+	w.conversationLimit = service.ConversationRecordBodyMaxBytes
 	w.buf.Reset()
+	w.conversationBuf.Reset()
+	w.conversationTruncated = false
 	return w
 }
 
@@ -551,15 +557,20 @@ func releaseOpsCaptureWriter(w *opsCaptureWriter) {
 	w.ResponseWriter = nil
 	w.ctx = nil
 	w.limit = opsCaptureWriterLimit
+	w.conversationLimit = service.ConversationRecordBodyMaxBytes
+	w.conversationTruncated = false
 	if !shouldPoolOpsCaptureWriter(w) {
 		return
 	}
 	w.buf.Reset()
+	w.conversationBuf.Reset()
 	opsCaptureWriterPool.Put(w)
 }
 
 func shouldPoolOpsCaptureWriter(w *opsCaptureWriter) bool {
-	return w != nil && w.buf.Cap() <= opsCaptureWriterPoolMaxRetainedCapacity
+	return w != nil &&
+		w.buf.Cap() <= opsCaptureWriterPoolMaxRetainedCapacity &&
+		w.conversationBuf.Cap() <= opsCaptureWriterPoolMaxRetainedCapacity
 }
 
 func (w *opsCaptureWriter) Status() int {
@@ -646,6 +657,7 @@ func (w *opsCaptureWriter) Write(b []byte) (int, error) {
 			_, _ = w.buf.Write(b)
 		}
 	}
+	w.captureConversationBytes(b)
 	return w.ResponseWriter.Write(b)
 }
 
@@ -661,7 +673,30 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 			_, _ = w.buf.WriteString(s)
 		}
 	}
+	w.captureConversationBytes([]byte(s))
 	return w.ResponseWriter.WriteString(s)
+}
+
+func (w *opsCaptureWriter) captureConversationBytes(value []byte) {
+	if w.ctx == nil || w.conversationLimit <= 0 {
+		return
+	}
+	if _, ok := getConversationCapture(w.ctx); !ok {
+		return
+	}
+	remaining := w.conversationLimit - w.conversationBuf.Len()
+	if remaining <= 0 {
+		if len(value) > 0 {
+			w.conversationTruncated = true
+		}
+		return
+	}
+	if len(value) > remaining {
+		_, _ = w.conversationBuf.Write(value[:remaining])
+		w.conversationTruncated = true
+		return
+	}
+	_, _ = w.conversationBuf.Write(value)
 }
 
 func (w *opsCaptureWriter) shouldCapture() bool {
@@ -692,6 +727,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}()
 		c.Writer = w
 		c.Next()
+		recordCapturedConversation(c, w)
 
 		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
 			return
@@ -1097,6 +1133,25 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		enqueueOpsErrorLog(ops, entry)
+	}
+}
+
+func recordCapturedConversation(c *gin.Context, w *opsCaptureWriter) {
+	state, ok := getConversationCapture(c)
+	if !ok || w == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
+	defer cancel()
+	err := state.service.RecordTurn(ctx, state.input, service.ConversationResponseCapture{
+		Body:        append([]byte(nil), w.conversationBuf.Bytes()...),
+		Truncated:   w.conversationTruncated,
+		StatusCode:  w.Status(),
+		ContentType: w.Header().Get("Content-Type"),
+		CompletedAt: time.Now(),
+	})
+	if err != nil {
+		log.Printf("[ConversationRecord] persist failed: %v", err)
 	}
 }
 

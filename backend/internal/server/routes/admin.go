@@ -114,11 +114,24 @@ func RegisterAdminRoutes(
 		// 独立提示词输入审计
 		registerPromptAuditRoutes(admin, h)
 
+		// 完整会话记录
+		registerConversationRoutes(admin, h)
+
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerConversationRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	conversations := admin.Group("/conversations")
+	{
+		conversations.GET("/config", h.Admin.Conversation.GetConfig)
+		conversations.PUT("/config", h.Admin.Conversation.UpdateConfig)
+		conversations.GET("", h.Admin.Conversation.List)
+		conversations.GET("/:conversation_key", h.Admin.Conversation.Get)
 	}
 }
 

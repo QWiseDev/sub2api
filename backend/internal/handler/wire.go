@@ -40,6 +40,7 @@ func ProvideAdminHandlers(
 	channelMonitorHandler *admin.ChannelMonitorHandler,
 	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
 	contentModerationHandler *admin.ContentModerationHandler,
+	conversationHandler *admin.ConversationHandler,
 	promptAuditHandler *securityaudit.PromptAdminHandler,
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
@@ -80,6 +81,7 @@ func ProvideAdminHandlers(
 		ChannelMonitor:         channelMonitorHandler,
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
 		ContentModeration:      contentModerationHandler,
+		Conversation:           conversationHandler,
 		PromptAudit:            promptAuditHandler,
 		Payment:                paymentHandler,
 		Affiliate:              affiliateHandler,
@@ -105,11 +107,13 @@ func ProvideGatewayHandler(
 	cfg *config.Config,
 	settingService *service.SettingService,
 	coordinator *securityaudit.Coordinator,
+	conversationRecordService *service.ConversationRecordService,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
+	h.conversationRecordService = conversationRecordService
 	return h
 }
 
@@ -125,10 +129,12 @@ func ProvideOpenAIGatewayHandler(
 	grokQuotaService *service.GrokQuotaService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	conversationRecordService *service.ConversationRecordService,
 ) *OpenAIGatewayHandler {
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
+	h.conversationRecordService = conversationRecordService
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h
 }
@@ -266,6 +272,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewChannelMonitorHandler,
 	admin.NewChannelMonitorRequestTemplateHandler,
 	admin.NewContentModerationHandler,
+	admin.NewConversationHandler,
 	admin.NewPaymentHandler,
 	admin.NewAffiliateHandler,
 	admin.NewComplianceHandler,

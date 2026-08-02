@@ -197,6 +197,7 @@ export default {
     securityAudit: '安全审计',
     contentModeration: '内容审核',
     promptAudit: '提示词审计',
+    conversations: '会话记录',
     auditLogs: '操作日志',
   },
 

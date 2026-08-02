@@ -50,6 +50,7 @@ type GatewayHandler struct {
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
 	errorPassthroughService   *service.ErrorPassthroughService
 	contentModerationService  *service.ContentModerationService
+	conversationRecordService *service.ConversationRecordService
 	securityAuditCoordinator  *securityaudit.Coordinator
 	concurrencyHelper         *ConcurrencyHelper
 	userMsgQueueHelper        *UserMsgQueueHelper
