@@ -225,6 +225,7 @@ type ResponsesRequest struct {
 	ParallelToolCalls  *bool               `json:"parallel_tool_calls,omitempty"`
 	Reasoning          *ResponsesReasoning `json:"reasoning,omitempty"`
 	Text               *ResponsesText      `json:"text,omitempty"`
+	ResponseFormat     json.RawMessage     `json:"response_format,omitempty"` // legacy OpenAI-compatible clients
 	ToolChoice         json.RawMessage     `json:"tool_choice,omitempty"`
 	ServiceTier        string              `json:"service_tier,omitempty"`
 	PromptCacheKey     string              `json:"prompt_cache_key,omitempty"`

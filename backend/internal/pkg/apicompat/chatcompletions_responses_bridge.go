@@ -68,8 +68,13 @@ func ResponsesToChatCompletionsRequest(req *ResponsesRequest) (*ChatCompletionsR
 			out.ToolChoice = tc
 		}
 	}
-	if req.Text != nil {
+	if req.Text != nil && len(bytes.TrimSpace(req.Text.Format)) > 0 {
 		out.ResponseFormat = responsesTextFormatToChatResponseFormat(req.Text.Format)
+	} else if len(bytes.TrimSpace(req.ResponseFormat)) > 0 {
+		// 部分 OpenAI-compatible 客户端调用 /responses 时仍发送 Chat Completions
+		// 的顶层 response_format。降级到 Chat 上游时必须保留，否则模型会从
+		// JSON 输出退化为普通文本，客户端最终以 HTTP 200 报 Invalid JSON。
+		out.ResponseFormat = req.ResponseFormat
 	}
 
 	return out, nil

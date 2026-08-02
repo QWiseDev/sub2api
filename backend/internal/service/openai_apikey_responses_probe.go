@@ -99,11 +99,11 @@ func selectResponsesProbeModel(account *Account) string {
 //   - 上游 404 / 405 → 端点不存在,写 false
 //   - 上游 2xx → 端点存在,进一步看工具能力:响应含 function_call 输出项才写 true;
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
-//   - 其他非 2xx（401/422/400/5xx 等）→ 端点存在但无法判定工具能力,保守写 true
-//   - 网络层失败（连接错误、超时）→ 不写标记，保持 unknown
-//     （后续请求仍按"现状即证据"默认走 Responses）
+//   - 明确拒绝 Responses input 形态的 400/422 → 写 false
+//   - 其他非 2xx（401/403/429/5xx 等）→ 不覆盖现有标记
+//   - 网络层失败（连接错误、超时）→ 不覆盖现有标记
 //
-// 该方法是幂等的：重复调用会以最新探测结果覆盖标记。
+// 该方法是幂等的：有明确结论时覆盖标记；限流或瞬时故障等无结论结果保留原值。
 //
 // 关于失败处理：探测本身的失败不应阻塞账号创建——账号能创建/更新成功就够了，
 // 探测结果只影响后续路由优化。所有错误都仅记录日志，不向调用方传播。
@@ -175,7 +175,15 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
-	supported := decideResponsesProbeSupport(resp.StatusCode, bodyBytes)
+	decision := decideResponsesProbeSupport(resp.StatusCode, bodyBytes)
+	if decision == openai_compat.ResponsesSupportUnknown {
+		logger.LegacyPrintf("service.openai_probe",
+			"probe_inconclusive: account_id=%d base_url=%s probe_model=%s status=%d",
+			accountID, normalizedBaseURL, probeModel, resp.StatusCode,
+		)
+		return
+	}
+	supported := decision == openai_compat.ResponsesSupportYes
 
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
 		openai_compat.ExtraKeyResponsesSupported: supported,
@@ -212,19 +220,32 @@ func isResponsesEndpointSupportedByStatus(status int) bool {
 // 携带工具的请求。
 //
 //   - 404 / 405：端点不存在 → false
-//   - 其他非 2xx（401/403/422/5xx 等）：端点存在,但本次无法判定工具能力
-//     （鉴权/校验/瞬时故障）→ 保守按 true,保持既有"端点存在即支持"行为
+//   - 明确提示需要 prompt/messages 而不接受 Responses input 的 400/422 → false
+//   - 其他非 2xx（401/403/429/5xx 等）→ unknown,不覆盖已有探测结果
 //   - 2xx：探测以 tool_choice=required 强制工具调用,响应必须含 function_call
 //     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
 //     判为 false,使网关改走 /v1/chat/completions 直转路径。
-func decideResponsesProbeSupport(status int, body []byte) bool {
+func decideResponsesProbeSupport(status int, body []byte) openai_compat.AccountResponsesSupport {
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
-		return false
+		return openai_compat.ResponsesSupportNo
 	}
-	if status < 200 || status >= 300 {
-		return true
+	if status >= 200 && status < 300 {
+		if responsesProbeBodyHasFunctionCall(body) {
+			return openai_compat.ResponsesSupportYes
+		}
+		return openai_compat.ResponsesSupportNo
 	}
-	return responsesProbeBodyHasFunctionCall(body)
+	if (status == http.StatusBadRequest || status == http.StatusUnprocessableEntity) &&
+		responsesProbeBodyRejectsResponsesInput(body) {
+		return openai_compat.ResponsesSupportNo
+	}
+	return openai_compat.ResponsesSupportUnknown
+}
+
+func responsesProbeBodyRejectsResponsesInput(body []byte) bool {
+	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()))
+	return strings.Contains(message, "input required") &&
+		(strings.Contains(message, "prompt") || strings.Contains(message, "messages"))
 }
 
 // responsesProbeBodyHasFunctionCall 判断非流式 Responses 响应体的 output 数组里
