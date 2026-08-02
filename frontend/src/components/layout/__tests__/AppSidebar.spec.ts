@@ -9,6 +9,13 @@ const componentSource = readFileSync(componentPath, 'utf8')
 const stylePath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../style.css')
 const styleSource = readFileSync(stylePath, 'utf8')
 
+describe('AppSidebar version update entry', () => {
+  it('does not expose the version badge or update dropdown', () => {
+    expect(componentSource).not.toContain('<VersionBadge')
+    expect(componentSource).not.toContain("import VersionBadge from '@/components/common/VersionBadge.vue'")
+  })
+})
+
 describe('AppSidebar custom SVG styles', () => {
   it('does not override uploaded SVG fill or stroke colors', () => {
     expect(componentSource).toContain('.sidebar-svg-icon {')
