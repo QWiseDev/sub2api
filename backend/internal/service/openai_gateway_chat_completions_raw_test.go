@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -560,28 +561,21 @@ func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testi
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
-func TestForwardAsChatCompletions_UnknownResponsesSupportFallbackUsesVersionedChatURL(t *testing.T) {
+func TestForwardAsChatCompletions_AutoPreservesChatCompletionsProtocol(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	body := []byte(`{"model":"glm-4.5-air","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"你是谁"},{"role":"assistant","content":"我是助手"},{"role":"user","content":"你能做什么"}],"stream":false}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	upstream := &httpUpstreamRecorder{responses: []*http.Response{
-		{
-			StatusCode: http.StatusNotFound,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"not found"}}`)),
-		},
-		{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_raw_fallback"}},
-			Body: io.NopCloser(strings.NewReader(
-				`{"id":"chatcmpl_1","object":"chat.completion","model":"glm-4.5-air","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
-			)),
-		},
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_auto_chat"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","object":"chat.completion","model":"deepseek-v4-flash","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
+		)),
 	}}
 
 	svc := &OpenAIGatewayService{
@@ -589,16 +583,20 @@ func TestForwardAsChatCompletions_UnknownResponsesSupportFallbackUsesVersionedCh
 		httpUpstream: upstream,
 	}
 	account := rawChatCompletionsTestAccount()
-	account.Credentials["base_url"] = "https://open.bigmodel.cn/api/paas/v4"
+	account.Credentials["base_url"] = "https://api.opencode.ai/v1"
+	account.Extra = map[string]any{
+		openai_compat.ExtraKeyResponsesMode:      string(openai_compat.ResponsesSupportModeAuto),
+		openai_compat.ExtraKeyResponsesSupported: true,
+	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
-	require.Len(t, upstream.requests, 2)
-	require.Equal(t, "https://open.bigmodel.cn/api/paas/v4/responses", upstream.requests[0].URL.String())
-	require.Equal(t, "https://open.bigmodel.cn/api/paas/v4/chat/completions", upstream.requests[1].URL.String())
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "https://api.opencode.ai/v1/chat/completions", upstream.requests[0].URL.String())
+	require.Equal(t, "我是助手", gjson.GetBytes(upstream.lastBody, "messages.1.content").String())
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"content":"ok"`)
 }

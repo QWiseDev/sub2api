@@ -532,7 +532,7 @@ export default {
           'Automatic passthrough is currently enabled: it only affects HTTP passthrough and does not disable WS mode.',
         responsesMode: 'Responses API support',
         responsesModeDesc:
-          'Only applies to the OpenAI API Key text forwarding path. Auto follows probe results; force modes override probing.',
+          'Only applies to the OpenAI API Key text forwarding path. Auto preserves the client endpoint; the Responses probe only decides whether /responses must fall back.',
         responsesModeAuto: 'Auto',
         responsesModeForceResponses: 'Force Responses',
         responsesModeForceChatCompletions: 'Force Chat Completions',

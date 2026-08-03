@@ -57,26 +57,63 @@ func TestDecideResponsesProbeSupport(t *testing.T) {
 		name   string
 		status int
 		body   []byte
-		want   bool
+		want   openai_compat.AccountResponsesSupport
 	}{
 		// Endpoint clearly absent on third-party OpenAI-compatible upstreams.
-		{"404 endpoint absent", 404, fnCall, false},
-		{"405 method not allowed", 405, fnCall, false},
+		{"404 endpoint absent", 404, fnCall, openai_compat.ResponsesSupportNo},
+		{"405 method not allowed", 405, fnCall, openai_compat.ResponsesSupportNo},
 		// 2xx: tool capability is judged by presence of a function_call output item.
-		{"200 with function_call", 200, fnCall, true},
+		{"200 with function_call", 200, fnCall, openai_compat.ResponsesSupportYes},
 		// Volcengine Ark coding/v3 × kimi-k2.6: reasoning only, no function_call.
-		{"200 reasoning only", 200, reasoningOnly, false},
-		{"200 invalid json", 200, []byte("not-json"), false},
-		{"200 no output field", 200, []byte(`{"status":"completed"}`), false},
-		// Non-2xx (other than 404/405): endpoint exists, capability undecidable -> conservative true.
-		{"400 conservative true", 400, reasoningOnly, true},
-		{"401 conservative true", 401, nil, true},
-		{"500 conservative true", 500, nil, true},
+		{"200 reasoning only", 200, reasoningOnly, openai_compat.ResponsesSupportNo},
+		{"200 invalid json", 200, []byte("not-json"), openai_compat.ResponsesSupportNo},
+		{"200 no output field", 200, []byte(`{"status":"completed"}`), openai_compat.ResponsesSupportNo},
+		{"400 rejects responses input", 400, []byte(`{"error":{"message":"Input required: specify \"prompt\" or \"messages\""}}`), openai_compat.ResponsesSupportNo},
+		{"400 unrelated validation error", 400, reasoningOnly, openai_compat.ResponsesSupportUnknown},
+		{"401 inconclusive", 401, nil, openai_compat.ResponsesSupportUnknown},
+		{"429 inconclusive", 429, nil, openai_compat.ResponsesSupportUnknown},
+		{"500 inconclusive", 500, nil, openai_compat.ResponsesSupportUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, decideResponsesProbeSupport(tc.status, tc.body))
 		})
+	}
+}
+
+func TestProbeOpenAIAPIKeyResponsesSupportInconclusiveDoesNotOverwrite(t *testing.T) {
+	updateCalls := make(chan map[string]any, 1)
+	account := Account{
+		ID:          97,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+	}
+	repo := &snapshotUpdateAccountRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+		updateExtraCalls:      updateCalls,
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+
+	svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+
+	select {
+	case update := <-updateCalls:
+		t.Fatalf("inconclusive probe unexpectedly updated extra: %v", update)
+	default:
 	}
 }
 

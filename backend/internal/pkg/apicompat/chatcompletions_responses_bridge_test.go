@@ -89,6 +89,33 @@ func TestResponsesToChatCompletionsRequest_TextFormatJsonObject(t *testing.T) {
 	assert.JSONEq(t, `{"type":"json_object"}`, string(out.ResponseFormat))
 }
 
+func TestResponsesToChatCompletionsRequest_LegacyResponseFormat(t *testing.T) {
+	req := &ResponsesRequest{
+		Model:          "gpt-4o",
+		Input:          json.RawMessage(`"Return JSON"`),
+		ResponseFormat: json.RawMessage(`{"type":"json_object"}`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"json_object"}`, string(out.ResponseFormat))
+}
+
+func TestResponsesToChatCompletionsRequest_TextFormatOverridesLegacyResponseFormat(t *testing.T) {
+	req := &ResponsesRequest{
+		Model:          "gpt-4o",
+		Input:          json.RawMessage(`"Return JSON"`),
+		ResponseFormat: json.RawMessage(`{"type":"json_object"}`),
+		Text: &ResponsesText{
+			Format: json.RawMessage(`{"type":"text"}`),
+		},
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"text"}`, string(out.ResponseFormat))
+}
+
 func TestResponsesToChatCompletionsRequest_TextFormatJsonSchema(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "gpt-4o",

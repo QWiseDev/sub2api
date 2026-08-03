@@ -466,6 +466,7 @@ func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyFallsBackToMess
 	require.Equal(t, "message", out.Output[1].Type)
 	require.Len(t, out.Output[1].Content, 1)
 	assert.Equal(t, "reasoning-only answer", out.Output[1].Content[0].Text)
+	assert.JSONEq(t, `[]`, string(out.Output[1].Content[0].Annotations))
 }
 
 func TestChatCompletionsResponseToResponses_DeepSeekReasoningToolCallDoesNotFallbackToMessageText(t *testing.T) {

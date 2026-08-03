@@ -3057,13 +3057,6 @@ const openAITextEndpointCapabilityLabel = computed(() => {
   if (openAIResponsesMode.value === 'force_chat_completions') {
     return t('admin.accounts.openai.capabilityChatCompletions')
   }
-  const extra = props.account?.extra as Record<string, unknown> | undefined
-  if (extra?.openai_responses_supported === true) {
-    return t('admin.accounts.openai.capabilityResponsesAuto')
-  }
-  if (extra?.openai_responses_supported === false) {
-    return t('admin.accounts.openai.capabilityChatCompletionsAuto')
-  }
   return t('admin.accounts.openai.capabilityTextAuto')
 })
 const openAIEndpointCapabilityOptions = computed<{ value: OpenAIEndpointCapability; label: string }[]>(() => [

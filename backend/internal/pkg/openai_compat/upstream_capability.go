@@ -113,3 +113,15 @@ func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 func ShouldUseResponsesAPI(extra map[string]any) bool {
 	return ResolveResponsesSupport(extra) != ResponsesSupportNo
 }
+
+// ShouldUseResponsesAPIForChatCompletions 判断 APIKey 账号收到入站
+// /v1/chat/completions 请求时是否需要转换后改走上游 /v1/responses。
+//
+// auto 模式保持客户端协议：Chat Completions 直转 Chat Completions；只有
+// force_responses 明确要求时才做 CC→Responses 转换。这样同一账号可以同时服务
+// 原生 Chat Completions 与原生 Responses 客户端，而 Responses 支持探测仍只用于
+// 判断入站 /v1/responses 是否需要降级到 Chat Completions。
+func ShouldUseResponsesAPIForChatCompletions(extra map[string]any) bool {
+	mode, _ := extra[ExtraKeyResponsesMode].(string)
+	return NormalizeResponsesSupportMode(mode) == ResponsesSupportModeForceResponses
+}

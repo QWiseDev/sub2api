@@ -68,8 +68,13 @@ func ResponsesToChatCompletionsRequest(req *ResponsesRequest) (*ChatCompletionsR
 			out.ToolChoice = tc
 		}
 	}
-	if req.Text != nil {
+	if req.Text != nil && len(bytes.TrimSpace(req.Text.Format)) > 0 {
 		out.ResponseFormat = responsesTextFormatToChatResponseFormat(req.Text.Format)
+	} else if len(bytes.TrimSpace(req.ResponseFormat)) > 0 {
+		// 部分 OpenAI-compatible 客户端调用 /responses 时仍发送 Chat Completions
+		// 的顶层 response_format。降级到 Chat 上游时必须保留，否则模型会从
+		// JSON 输出退化为普通文本，客户端最终以 HTTP 200 报 Invalid JSON。
+		out.ResponseFormat = req.ResponseFormat
 	}
 
 	return out, nil
@@ -1070,14 +1075,11 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools map[string]bo
 	}
 	if text != "" || len(message.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   generateItemID(),
-			Role: "assistant",
-			Content: []ResponsesContentPart{{
-				Type: "output_text",
-				Text: text,
-			}},
-			Status: "completed",
+			Type:    "message",
+			ID:      generateItemID(),
+			Role:    "assistant",
+			Content: []ResponsesContentPart{responsesOutputTextPart(text)},
+			Status:  "completed",
 		})
 	}
 
@@ -1152,8 +1154,16 @@ func emptyResponsesMessageOutput() ResponsesOutput {
 		Type:    "message",
 		ID:      generateItemID(),
 		Role:    "assistant",
-		Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
+		Content: []ResponsesContentPart{responsesOutputTextPart("")},
 		Status:  "completed",
+	}
+}
+
+func responsesOutputTextPart(text string) ResponsesContentPart {
+	return ResponsesContentPart{
+		Type:        "output_text",
+		Text:        text,
+		Annotations: json.RawMessage(`[]`),
 	}
 }
 
@@ -1786,14 +1796,11 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 	}
 	if state.MessageItemID != "" || len(state.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   nonEmpty(state.MessageItemID, generateItemID()),
-			Role: "assistant",
-			Content: []ResponsesContentPart{{
-				Type: "output_text",
-				Text: state.Text.String(),
-			}},
-			Status: "completed",
+			Type:    "message",
+			ID:      nonEmpty(state.MessageItemID, generateItemID()),
+			Role:    "assistant",
+			Content: []ResponsesContentPart{responsesOutputTextPart(state.Text.String())},
+			Status:  "completed",
 		})
 	}
 	for i := 0; i < len(state.ToolCalls); i++ {
