@@ -156,6 +156,49 @@ func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T)
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+func TestForwardAsRawChatCompletions_RetriesDFLASHWithoutResponseFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"return json"}],"response_format":{"type":"json_object"},"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":{"message":"Error from provider (Console): Upstream request failed: [400] DFLASH speculative decoding does not support grammar-constrained decoding yet."}}`,
+			)),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"chatcmpl_dflash_retry","object":"chat.completion","model":"deepseek-v4-flash","choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+			)),
+		},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 2)
+	require.True(t, gjson.GetBytes(upstream.bodies[0], "response_format").Exists())
+	require.False(t, gjson.GetBytes(upstream.bodies[1], "response_format").Exists())
+	require.Equal(t, "return json", gjson.GetBytes(upstream.bodies[1], "messages.0.content").String())
+	require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(upstream.bodies[1], "model").String())
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"content":"{\"ok\":true}"`)
+}
+
 func TestForwardAsRawChatCompletions_NonStreamingCapturesCacheWriteUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
