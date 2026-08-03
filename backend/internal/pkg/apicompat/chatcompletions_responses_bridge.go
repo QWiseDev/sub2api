@@ -1075,14 +1075,11 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools map[string]bo
 	}
 	if text != "" || len(message.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   generateItemID(),
-			Role: "assistant",
-			Content: []ResponsesContentPart{{
-				Type: "output_text",
-				Text: text,
-			}},
-			Status: "completed",
+			Type:    "message",
+			ID:      generateItemID(),
+			Role:    "assistant",
+			Content: []ResponsesContentPart{responsesOutputTextPart(text)},
+			Status:  "completed",
 		})
 	}
 
@@ -1157,8 +1154,16 @@ func emptyResponsesMessageOutput() ResponsesOutput {
 		Type:    "message",
 		ID:      generateItemID(),
 		Role:    "assistant",
-		Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
+		Content: []ResponsesContentPart{responsesOutputTextPart("")},
 		Status:  "completed",
+	}
+}
+
+func responsesOutputTextPart(text string) ResponsesContentPart {
+	return ResponsesContentPart{
+		Type:        "output_text",
+		Text:        text,
+		Annotations: json.RawMessage(`[]`),
 	}
 }
 
@@ -1791,14 +1796,11 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 	}
 	if state.MessageItemID != "" || len(state.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   nonEmpty(state.MessageItemID, generateItemID()),
-			Role: "assistant",
-			Content: []ResponsesContentPart{{
-				Type: "output_text",
-				Text: state.Text.String(),
-			}},
-			Status: "completed",
+			Type:    "message",
+			ID:      nonEmpty(state.MessageItemID, generateItemID()),
+			Role:    "assistant",
+			Content: []ResponsesContentPart{responsesOutputTextPart(state.Text.String())},
+			Status:  "completed",
 		})
 	}
 	for i := 0; i < len(state.ToolCalls); i++ {
