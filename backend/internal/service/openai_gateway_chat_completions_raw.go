@@ -189,7 +189,6 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 			if err != nil {
 				return nil, err
 			}
-			upstreamBody = retryBody
 			if resp.StatusCode >= 400 {
 				respBody, upstreamMsg = s.readOpenAIUpstreamError(resp)
 			}
