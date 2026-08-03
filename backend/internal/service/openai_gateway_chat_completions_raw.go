@@ -35,6 +35,8 @@ var openaiCCRawAllowedHeaders = map[string]bool{
 	"user-agent":      true,
 }
 
+const dflashGrammarConstraintError = "DFLASH speculative decoding does not support grammar-constrained decoding yet"
+
 // forwardAsRawChatCompletions 直转客户端的 Chat Completions 请求到上游
 // `{base_url}/v1/chat/completions`，**不**做 CC↔Responses 协议转换。
 //
@@ -173,7 +175,25 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
-		if account.Platform == PlatformGrok {
+		retryBody, shouldRetry, retryErr := stripDFLASHResponseFormatForRetry(resp.StatusCode, respBody, upstreamBody)
+		if retryErr != nil {
+			return nil, fmt.Errorf("remove unsupported DFLASH response_format: %w", retryErr)
+		}
+		if shouldRetry {
+			logger.L().Warn("openai chat_completions raw: DFLASH rejected grammar constraint, retrying without response_format",
+				zap.Int64("account_id", account.ID),
+				zap.String("upstream_model", upstreamModel),
+			)
+			_ = resp.Body.Close()
+			resp, err = s.sendCCUpstreamRequest(ctx, c, account, targetURL, retryBody, clientStream, token, customUA, grokCacheIdentity)
+			if err != nil {
+				return nil, err
+			}
+			if resp.StatusCode >= 400 {
+				respBody, upstreamMsg = s.readOpenAIUpstreamError(resp)
+			}
+		}
+		if resp.StatusCode >= 400 && account.Platform == PlatformGrok {
 			kind := "http_error"
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
 				kind = "failover"
@@ -198,10 +218,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 			}
 			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 		}
-		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
-			return nil, foErr
+		if resp.StatusCode >= 400 {
+			if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
+				return nil, foErr
+			}
+			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 		}
-		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
 
 	if account.Platform == PlatformGrok {
@@ -221,6 +243,20 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		result.UpstreamEndpoint = grokChatRawEndpoint
 	}
 	return result, forwardErr
+}
+
+func stripDFLASHResponseFormatForRetry(statusCode int, respBody, requestBody []byte) ([]byte, bool, error) {
+	if statusCode != http.StatusBadRequest || !strings.Contains(string(respBody), dflashGrammarConstraintError) {
+		return requestBody, false, nil
+	}
+	if !gjson.GetBytes(requestBody, "response_format").Exists() {
+		return requestBody, false, nil
+	}
+	updated, err := sjson.DeleteBytes(requestBody, "response_format")
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, true, nil
 }
 
 func (s *OpenAIGatewayService) rawChatCompletionsURL(account *Account) (string, error) {
